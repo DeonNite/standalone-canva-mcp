@@ -1,70 +1,142 @@
 # MCP Demo Playground
 
-This scaffold is now focused on letting your own chatbot use OpenAI to perform Canva MCP actions.
+This repository is a React + Node chatbot that uses OpenAI as the model layer and Canva MCP as the tool layer.
 
-## What is included
+## Current Flow
 
-- `apps/client`: a Vite + React chat UI
-- `apps/server`: an Express backend that calls the OpenAI Responses API
-- `apps/server/src/mcpBridge.js`: a configurable MCP bridge that defaults to Canva via `mcp-remote`
-- `packages/local-mcp-server`: the earlier local demo MCP server, kept as an optional fallback
+1. The React client sends `GET /api/health` or `POST /api/chat` to the Express backend.
+2. The backend creates an `McpBridge` in Canva mode by default.
+3. The bridge starts Canva through `mcp-remote`:
 
-## Default architecture
+   ```bash
+   npx -y mcp-remote@latest https://mcp.canva.com/mcp
+   ```
 
-1. The React app sends a chat message to the Node backend.
-2. The backend connects to Canva's MCP server through `mcp-remote`.
-3. The backend advertises the discovered MCP tools to OpenAI as callable functions.
-4. If the model chooses a tool, the backend executes it through the MCP client.
-5. The assistant reply and tool activity are returned to the UI.
+4. `mcp-remote` handles the Canva approval flow in the browser and exposes Canva MCP tools over stdio.
+5. The backend lists the available MCP tools and advertises them to the OpenAI Responses API as callable functions.
+6. If OpenAI returns a function call, the backend executes that tool through the MCP client, sends the tool result back to OpenAI, and waits for the final assistant answer.
+7. The backend returns the assistant reply and tool activity to the React UI.
 
-This matches Canva's documented MCP setup, which uses:
+Important: the React app never talks to Canva directly. The path is:
 
-```bash
-npx -y mcp-remote@latest https://mcp.canva.com/mcp
-```
+`React UI -> Express backend -> MCP SDK client -> mcp-remote -> Canva MCP -> OpenAI tool loop -> React UI`
 
-Source: https://www.canva.dev/docs/connect/canva-mcp-server-setup/
+This follows Canva's documented MCP setup:
 
-## Run it
+- https://www.canva.dev/docs/connect/canva-mcp-server-setup/
 
-1. Copy `.env.example` to `.env` if you have not already
-2. Add your `OPENAI_API_KEY`
-3. Keep `MCP_SERVER_TARGET=canva` for Canva mode
-4. Install dependencies with `npm install`
-5. Start both apps with `npm run dev`
-6. Open `http://localhost:5173`
-7. Click `Refresh` or send a prompt
-8. Approve the Canva browser flow opened by `mcp-remote`
+## Project Structure
+
+- `apps/client`: Vite + React UI
+- `apps/server`: Express API and OpenAI tool loop
+- `apps/server/src/mcpBridge.js`: Canva/local MCP transport selection
+- `packages/local-mcp-server`: optional fallback demo MCP server
+
+## Setup
+
+1. Create `.env` from `.env.example` if needed.
+2. Set `OPENAI_API_KEY`.
+3. Keep `MCP_SERVER_TARGET=canva` for Canva mode.
+4. Install dependencies:
+
+   ```bash
+   npm install
+   ```
+
+5. Start the app:
+
+   ```bash
+   npm run dev
+   ```
+
+6. Open `http://localhost:5173`.
+7. Click `Refresh` or send a chat message.
+8. Approve the Canva browser flow opened by `mcp-remote` on first use.
 
 The backend runs on `http://localhost:8787`.
 
-## Example Canva prompts
+## How To Test
+
+### 1. Health Check
+
+Use the UI `Refresh` button or call the backend directly.
+
+PowerShell:
+
+```powershell
+Invoke-RestMethod -Uri 'http://localhost:8787/api/health' | ConvertTo-Json -Depth 6
+```
+
+Expected result:
+
+- `openaiConfigured` should be `true`
+- `mcpTarget` should be `Canva MCP`
+- `toolCount` should be greater than `0` once Canva tools are discovered
+
+### 2. Non-Mutating Chat Smoke Test
+
+This checks the full UI/backend/OpenAI path without creating or editing Canva content.
+
+PowerShell:
+
+```powershell
+$body = @{
+  sessionId = 'manual-smoke'
+  message = 'What Canva MCP actions can you help with in this app? Keep it short and do not create or modify anything.'
+} | ConvertTo-Json
+
+Invoke-RestMethod -Method Post -Uri 'http://localhost:8787/api/chat' -ContentType 'application/json' -Body $body | ConvertTo-Json -Depth 8
+```
+
+Expected result:
+
+- a valid assistant reply
+- no server crash
+- optional `toolEvents` depending on the model's choice
+
+### 3. Canva Read-Only Tool Test
+
+Run one of these in the chat UI after approval:
 
 - `Show me my most recently edited Canva designs`
+- `Find my brand presentation and tell me what export formats are available`
+- `List the Canva folders I can access`
+
+Expected result:
+
+- the assistant should use Canva MCP tools such as search, get-design, get-export-formats, or folder tools
+- the right-side tool activity panel should show the tool calls
+
+### 4. Canva Action Test
+
+Run a real action only if you are comfortable creating or changing Canva content:
+
 - `Create a new Canva presentation titled Q3 launch plan`
-- `Find my brand presentation and export it as a PDF`
 - `Create a square social post in Canva for a product teaser`
+- `Export my design named Brand Presentation as a PDF`
 
-Actual tool availability depends on the Canva account and plan connected during the MCP approval flow.
+Expected result:
 
-## Optional local fallback
+- the assistant uses Canva MCP tools
+- Canva content may be created, updated, or exported depending on the prompt
 
-If you want to switch back to the bundled local demo tools instead of Canva, set:
+### 5. Optional Local Fallback Test
+
+If you want to switch away from Canva and test the bundled demo MCP server:
 
 ```env
 MCP_SERVER_TARGET=local
 ```
 
-That mode uses the server in `packages/local-mcp-server` and exposes these sample tools:
+Then restart `npm run dev` and try:
 
-- `add_numbers`
-- `list_todos`
-- `add_todo`
-- `complete_todo`
-- `clear_completed`
+- `Add 18 and 27 using the MCP tool`
+- `Add a todo to review Canva MCP`
+- `List my todos`
 
 ## Notes
 
-- Canva's setup docs say `mcp-remote` will open a browser tab so you can approve access.
-- Canva's docs also note some features depend on your Canva plan.
-- The server no longer tries to connect to MCP at boot; it connects lazily when the UI refreshes or sends a chat message.
+- Canva approval and auth are handled by `mcp-remote`, not by custom OAuth code in this repository.
+- Some Canva tools depend on the connected Canva plan and scopes.
+- The backend connects to MCP lazily on refresh or chat, not at server boot.
+- If the first Canva request fails, approve the browser flow and retry the same request.
