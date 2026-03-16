@@ -1,0 +1,23 @@
+{
+  "name": "mcp-demo",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "concurrently -k -n server,client -c yellow,cyan \"npm run dev:server\" \"npm run dev:client\"",
+    "dev:client": "npm run dev --workspace @mcp-demo/client",
+    "dev:server": "npm run dev --workspace @mcp-demo/server",
+    "start": "npm run start --workspace @mcp-demo/server"
+  },
+  "devDependencies": {
+    "concurrently": "^9.0.1"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
+
